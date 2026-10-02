@@ -1,33 +1,18 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const COOKIE_NAME = 'forme_session';
 const SESSION_TTL_MS = 86400000;
-const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
-
-function ensureUsersFile() {
-  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, '[]', 'utf8');
-  }
-}
+const demoUsers = [
+  { id: 'demo-user-1', name: 'Alice Demo', email: 'alice@example.com', password: 'password123' }
+];
 
 function readUsers() {
-  ensureUsersFile();
-  try {
-    const raw = fs.readFileSync(USERS_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return demoUsers.map((user) => ({ ...user }));
 }
 
 function writeUsers(users) {
-  ensureUsersFile();
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+  demoUsers.splice(0, demoUsers.length, ...users.map((user) => ({ ...user })));
 }
 
 function sanitizeUser(user) {
