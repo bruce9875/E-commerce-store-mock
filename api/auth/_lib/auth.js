@@ -81,19 +81,25 @@ function createSessionToken(user) {
 
 function verifySessionToken(token) {
   if (!token) return null;
-  const [payloadPart, signaturePart] = String(token).split('.');
+
+  const parts = String(token).split('.');
+  const payloadPart = parts[0];
+  const signaturePart = parts[1];
+
   if (!payloadPart || !signaturePart) return null;
 
-  const expected = crypto
-    .createHmac('sha256', getSessionSecret())
-    .update(payloadPart)
-    .digest('base64url');
-
-  if (!crypto.timingSafeEqual(Buffer.from(signaturePart), Buffer.from(expected))) {
-    return null;
-  }
-
   try {
+    const expected = crypto
+      .createHmac('sha256', getSessionSecret())
+      .update(payloadPart)
+      .digest('base64url');
+
+    const actual = Buffer.from(signaturePart, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+
+    if (actual.length !== expectedBuffer.length) return null;
+    if (!crypto.timingSafeEqual(actual, expectedBuffer)) return null;
+
     const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
     if (!payload || typeof payload !== 'object') return null;
     if (Number(payload.exp) < Date.now()) return null;
@@ -130,6 +136,7 @@ module.exports = {
   readUsers,
   writeUsers,
   sanitizeUser,
+  verifySessionToken,
   getSessionUser,
   setSessionCookie,
   clearSessionCookie,
