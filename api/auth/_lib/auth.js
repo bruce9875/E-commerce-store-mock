@@ -1,0 +1,138 @@
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+
+const COOKIE_NAME = 'forme_session';
+const SESSION_TTL_MS = 86400000;
+const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
+
+function ensureUsersFile() {
+  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
+  if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, '[]', 'utf8');
+  }
+}
+
+function readUsers() {
+  ensureUsersFile();
+  try {
+    const raw = fs.readFileSync(USERS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeUsers(users) {
+  ensureUsersFile();
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function sanitizeUser(user) {
+  if (!user || typeof user !== 'object') return null;
+  const { password, ...safeUser } = user;
+  return safeUser;
+}
+
+function parseCookies(cookieHeader = '') {
+  return (cookieHeader || '').split(';').reduce((cookies, part) => {
+    const [name, ...rest] = part.trim().split('=');
+    if (name) {
+      cookies[name] = decodeURIComponent(rest.join('='));
+    }
+    return cookies;
+  }, {});
+}
+
+async function readBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid JSON body');
+  }
+}
+
+function getSessionSecret() {
+  return process.env.AUTH_SECRET || 'forme-demo-secret';
+}
+
+function createSessionToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    user: sanitizeUser(user),
+    exp: Date.now() + SESSION_TTL_MS
+  })).toString('base64url');
+
+  const signature = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(payload)
+    .digest('base64url');
+
+  return `${payload}.${signature}`;
+}
+
+function verifySessionToken(token) {
+  if (!token) return null;
+  const [payloadPart, signaturePart] = String(token).split('.');
+  if (!payloadPart || !signaturePart) return null;
+
+  const expected = crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(payloadPart)
+    .digest('base64url');
+
+  if (!crypto.timingSafeEqual(Buffer.from(signaturePart), Buffer.from(expected))) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+    if (!payload || typeof payload !== 'object') return null;
+    if (Number(payload.exp) < Date.now()) return null;
+    return payload.user || null;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionUser(req) {
+  const cookies = parseCookies(req.headers.cookie || '');
+  return verifySessionToken(cookies[COOKIE_NAME]);
+}
+
+function setSessionCookie(res, user) {
+  const token = createSessionToken(user);
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+function sendJson(res, statusCode, payload) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(payload));
+}
+
+module.exports = {
+  COOKIE_NAME,
+  readBody,
+  readUsers,
+  writeUsers,
+  sanitizeUser,
+  getSessionUser,
+  setSessionCookie,
+  clearSessionCookie,
+  sendJson,
+  randomUUID
+};
